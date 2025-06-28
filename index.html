@@ -29,7 +29,7 @@
     <div id="error-message" class="hidden fixed inset-x-0 top-0 mt-4 z-50">
         <div class="max-w-md mx-auto bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-lg shadow-lg" role="alert">
             <strong class="font-bold">Error!</strong>
-            <span class="block sm:inline">Could not fetch weather data. Please try again later.</span>
+            <span class="block sm:inline">Could not fetch all data. Some features may be unavailable.</span>
         </div>
     </div>
 
@@ -41,9 +41,19 @@
 
         <!-- Main Content Area -->
         <div class="bg-white rounded-2xl shadow-lg p-6 md:p-8">
+            <!-- Today's Highlights - HIDDEN BY DEFAULT -->
+            <div id="highlights-section" class="mb-8 hidden">
+                <h2 class="text-2xl font-bold text-center mb-4 text-gray-800">Today's Highlights</h2>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4 text-center">
+                    <div id="highlight-aqi" class="bg-gray-50 p-4 rounded-xl"></div>
+                    <div id="highlight-sunrise" class="bg-gray-50 p-4 rounded-xl"></div>
+                    <div id="highlight-sunset" class="bg-gray-50 p-4 rounded-xl"></div>
+                </div>
+            </div>
+
             <!-- Forecast Cards Grid -->
             <div id="forecast-grid" class="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-4 lg:grid-cols-8 gap-4 mb-8">
-                <!-- Forecast cards will be injected here by JavaScript -->
+                <!-- Forecast cards will be injected here -->
             </div>
 
             <!-- Charts Area -->
@@ -73,53 +83,98 @@
     <script>
         // --- DOM Elements ---
         const forecastGrid = document.getElementById('forecast-grid');
+        const highlightsSection = document.getElementById('highlights-section');
         const tempChartCanvas = document.getElementById('temperatureChart');
         const uvIndexChartCanvas = document.getElementById('uvIndexChart');
         const loadingSpinner = document.getElementById('loading-spinner');
         const errorMessage = document.getElementById('error-message');
 
-        // --- Weather Data Fetching and Processing ---
-
-        // Coordinates for Flower Mound, TX
+        // --- API Configuration ---
         const LATITUDE = 33.01;
         const LONGITUDE = -97.10;
+        const TIMEZONE = "America/Chicago";
 
-        // Open-Meteo API URL - now includes wind, UV index, AND specifies 16 days
-        const API_URL = `https://api.open-meteo.com/v1/forecast?latitude=${LATITUDE}&longitude=${LONGITUDE}&daily=weathercode,temperature_2m_max,temperature_2m_min,precipitation_probability_max,windspeed_10m_max,winddirection_10m_dominant,uv_index_max&temperature_unit=fahrenheit&windspeed_unit=mph&precipitation_unit=inch&timezone=America%2FChicago&forecast_days=16`;
+        const WEATHER_API_URL = `https://api.open-meteo.com/v1/forecast?latitude=${LATITUDE}&longitude=${LONGITUDE}&daily=weathercode,temperature_2m_max,temperature_2m_min,precipitation_probability_max,windspeed_10m_max,winddirection_10m_dominant,uv_index_max,sunrise,sunset&temperature_unit=fahrenheit&windspeed_unit=mph&precipitation_unit=inch&timezone=${TIMEZONE}&forecast_days=16`;
+        // --- FIX: Added 'current=us_aqi' to get today's live data and 'forecast_days=16' to align data length ---
+        const AIR_QUALITY_API_URL = `https://air-quality-api.open-meteo.com/v1/air-quality?latitude=${LATITUDE}&longitude=${LONGITUDE}&current=us_aqi&daily=us_aqi&timezone=${TIMEZONE}&forecast_days=16`;
         
         // --- Helper Functions ---
-
         function getWeatherInfo(code) {
-            const weatherMap = {
-                0: { icon: '☀️', description: 'Clear sky' }, 1: { icon: '🌤️', description: 'Mainly clear' }, 2: { icon: '⛅️', description: 'Partly cloudy' }, 3: { icon: '☁️', description: 'Overcast' }, 45: { icon: '🌫️', description: 'Fog' }, 48: { icon: '🌫️', description: 'Depositing rime fog' }, 51: { icon: '🌦️', description: 'Light drizzle' }, 53: { icon: '🌦️', description: 'Moderate drizzle' }, 55: { icon: '🌦️', description: 'Dense drizzle' }, 61: { icon: '🌧️', description: 'Slight rain' }, 63: { icon: '🌧️', description: 'Moderate rain' }, 65: { icon: '🌧️', description: 'Heavy rain' }, 71: { icon: '🌨️', description: 'Slight snow' }, 73: { icon: '🌨️', description: 'Moderate snow' }, 75: { icon: '❄️', description: 'Heavy snow' }, 80: { icon: '🌧️', description: 'Slight rain showers' }, 81: { icon: '🌧️', description: 'Moderate rain showers' }, 82: { icon: '⛈️', description: 'Violent rain showers' }, 95: { icon: '⛈️', description: 'Thunderstorm' }, 96: { icon: '⛈️', description: 'Thunderstorm with slight hail' }, 99: { icon: '⛈️', description: 'Thunderstorm with heavy hail' },
-            };
-            return weatherMap[code] || { icon: '❓', description: 'Unknown' };
+             const map = { 0: { i: '☀️', d: 'Clear' }, 1: { i: '🌤️', d: 'Mainly clear' }, 2: { i: '⛅️', d: 'Partly cloudy' }, 3: { i: '☁️', d: 'Overcast' }, 45: { i: '🌫️', d: 'Fog' }, 48: { i: '🌫️', d: 'Rime fog' }, 51: { i: '🌦️', d: 'Light drizzle' }, 53: { i: '🌦️', d: 'Drizzle' }, 55: { i: '🌦️', d: 'Dense drizzle' }, 61: { i: '🌧️', d: 'Slight rain' }, 63: { i: '🌧️', d: 'Rain' }, 65: { i: '🌧️', d: 'Heavy rain' }, 80: { i: '🌧️', d: 'Slight showers' }, 81: { i: '🌧️', d: 'Showers' }, 82: { i: '⛈️', d: 'Violent showers' }, 95: { i: '⛈️', d: 'Thunderstorm' } };
+             return map[code] || { i: '❓', d: 'Unknown' };
         }
-
-        function windDirection(degrees) {
-            const directions = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW'];
-            const index = Math.round((degrees / 22.5) + 0.5) % 16;
-            return directions[index];
-        }
-
-        function getUvColor(uvIndex) {
-            if (uvIndex <= 2) return 'rgba(75, 192, 192, 0.7)'; // Low - Green
-            if (uvIndex <= 5) return 'rgba(255, 205, 86, 0.7)'; // Moderate - Yellow
-            if (uvIndex <= 7) return 'rgba(255, 159, 64, 0.7)'; // High - Orange
-            if (uvIndex <= 10) return 'rgba(255, 99, 132, 0.7)'; // Very High - Red
-            return 'rgba(153, 102, 255, 0.7)'; // Extreme - Purple
+        function windDirection(d) { const dirs = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW']; return dirs[Math.round((d / 22.5) + 0.5) % 16]; }
+        function getUvColor(uv) { if (uv <= 2) return 'rgba(75, 192, 192, 0.7)'; if (uv <= 5) return 'rgba(255, 205, 86, 0.7)'; if (uv <= 7) return 'rgba(255, 159, 64, 0.7)'; if (uv <= 10) return 'rgba(255, 99, 132, 0.7)'; return 'rgba(153, 102, 255, 0.7)'; }
+        function getAqiInfo(aqi) {
+            if (aqi <= 50) return { label: 'Good', color: 'text-green-600' };
+            if (aqi <= 100) return { label: 'Moderate', color: 'text-yellow-600' };
+            if (aqi <= 150) return { label: 'Unhealthy for Some', color: 'text-orange-600' };
+            if (aqi <= 200) return { label: 'Unhealthy', color: 'text-red-600' };
+            if (aqi <= 300) return { label: 'Very Unhealthy', color: 'text-purple-600' };
+            return { label: 'Hazardous', color: 'text-maroon-600' };
         }
 
         // --- Main Function to Initialize the App ---
-        async function getWeatherData() {
+        async function getAllData() {
             try {
-                const response = await fetch(API_URL);
-                if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-                const data = await response.json();
+                const [weatherResponse, airQualityResponse] = await Promise.all([
+                    fetch(WEATHER_API_URL),
+                    fetch(AIR_QUALITY_API_URL)
+                ]);
+
+                if (!weatherResponse.ok) throw new Error('Weather data fetch failed');
                 
-                displayForecast(data.daily);
-                createTemperatureChart(data.daily);
-                createUvIndexChart(data.daily);
+                const weatherData = await weatherResponse.json();
+                let airQualityData = null;
+
+                if (airQualityResponse.ok) {
+                    const aqData = await airQualityResponse.json();
+                    if (!aqData.error) {
+                        airQualityData = aqData;
+                    } else {
+                        console.error("Air Quality API returned an error:", aqData.reason);
+                    }
+                } else {
+                    console.warn("Could not fetch air quality data. Status:", airQualityResponse.status);
+                }
+
+                // --- FIX: Reworked data combination logic ---
+                const combinedData = weatherData.daily.time.map((time, index) => {
+                    let dayAqi = null;
+                    if (airQualityData) {
+                        // For the first day (today), prioritize the 'current' AQI value.
+                        if (index === 0 && airQualityData.current && typeof airQualityData.current.us_aqi !== 'undefined') {
+                            dayAqi = airQualityData.current.us_aqi;
+                        } 
+                        // For other days, or as a fallback for today, use the daily forecast value.
+                        else if (airQualityData.daily && airQualityData.daily.us_aqi && typeof airQualityData.daily.us_aqi[index] !== 'undefined') {
+                            dayAqi = airQualityData.daily.us_aqi[index];
+                        }
+                    }
+
+                    return {
+                        time,
+                        weathercode: weatherData.daily.weathercode[index],
+                        temp_max: weatherData.daily.temperature_2m_max[index],
+                        temp_min: weatherData.daily.temperature_2m_min[index],
+                        precip_prob: weatherData.daily.precipitation_probability_max[index],
+                        windspeed: weatherData.daily.windspeed_10m_max[index],
+                        wind_dir: weatherData.daily.winddirection_10m_dominant[index],
+                        uv_index: weatherData.daily.uv_index_max[index],
+                        sunrise: weatherData.daily.sunrise[index],
+                        sunset: weatherData.daily.sunset[index],
+                        aqi: dayAqi
+                    };
+                });
+                
+                // This check will now pass if current AQI data is available
+                if (combinedData[0] && combinedData[0].aqi !== null) {
+                    displayHighlights(combinedData[0]);
+                }
+                
+                displayForecast(combinedData);
+                createTemperatureChart(combinedData);
+                createUvIndexChart(combinedData);
 
             } catch (error) {
                 console.error("Failed to fetch weather data:", error);
@@ -130,91 +185,93 @@
         }
 
         // --- UI Rendering Functions ---
+        
+        function displayHighlights(today) {
+            const highlightAqi = document.getElementById('highlight-aqi');
+            const highlightSunrise = document.getElementById('highlight-sunrise');
+            const highlightSunset = document.getElementById('highlight-sunset');
+            
+            let aqiContent;
+            // Handle case where AQI might still be null, even after the fix
+            if (today.aqi !== null) {
+                const aqiInfo = getAqiInfo(today.aqi);
+                aqiContent = `<p class="text-3xl font-bold ${aqiInfo.color}">${today.aqi}</p><p class="text-md">${aqiInfo.label}</p>`;
+            } else {
+                aqiContent = `<p class="text-3xl font-bold text-gray-500">N/A</p><p class="text-md">Data unavailable</p>`;
+            }
+            highlightAqi.innerHTML = `<p class="text-lg font-semibold">Air Quality</p>${aqiContent}`;
 
-        function displayForecast(dailyData) {
+            highlightSunrise.innerHTML = `<p class="text-lg font-semibold">Sunrise</p><p class="text-3xl font-bold">${new Date(today.sunrise).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}</p>`;
+            highlightSunset.innerHTML = `<p class="text-lg font-semibold">Sunset</p><p class="text-3xl font-bold">${new Date(today.sunset).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}</p>`;
+            
+            // Make the entire section visible
+            highlightsSection.classList.remove('hidden');
+        }
+
+        function displayForecast(combinedData) {
             forecastGrid.innerHTML = ''; 
 
-            dailyData.time.forEach((dateStr, index) => {
-                const date = new Date(dateStr + 'T00:00:00-05:00');
+            combinedData.forEach(day => {
+                const date = new Date(day.time + 'T00:00:00');
                 const dayOfWeek = date.toLocaleDateString('en-US', { weekday: 'short' });
                 const monthDay = `${date.getMonth() + 1}/${date.getDate()}`;
-                
-                const weatherInfo = getWeatherInfo(dailyData.weathercode[index]);
-                const maxTemp = Math.round(dailyData.temperature_2m_max[index]);
-                const minTemp = Math.round(dailyData.temperature_2m_min[index]);
-                const precipChance = dailyData.precipitation_probability_max[index];
-                const windSpeed = Math.round(dailyData.windspeed_10m_max[index]);
-                const windDir = windDirection(dailyData.winddirection_10m_dominant[index]);
-                const uvIndex = Math.round(dailyData.uv_index_max[index]);
+                const weatherInfo = getWeatherInfo(day.weathercode);
 
                 const card = document.createElement('div');
-                card.className = 'weather-card text-center bg-gray-50 p-3 rounded-xl border border-gray-200 flex flex-col justify-between';
+                card.className = 'weather-card text-center bg-gray-50 p-3 rounded-xl border border-gray-200 flex flex-col justify-between text-sm';
                 
+                // Display 'N/A' if AQI data is not available for a given day
+                const aqiHtml = `<div class="flex justify-between items-center"><span>🍃 AQI:</span> <strong class="ml-1">${day.aqi !== null ? day.aqi : 'N/A'}</strong></div>`;
+
                 card.innerHTML = `
                     <div>
                         <p class="font-bold text-base text-gray-800">${dayOfWeek}</p>
                         <p class="text-sm text-gray-500 mb-2">${monthDay}</p>
-                        <div class="text-5xl my-2">${weatherInfo.icon}</div>
-                        <p class="font-semibold text-xl text-red-500">${maxTemp}°</p>
-                        <p class="text-gray-500 text-lg">${minTemp}°</p>
+                        <div class="text-5xl my-2" title="${weatherInfo.d}">${weatherInfo.i}</div>
+                        <p class="font-semibold text-xl text-red-500">${Math.round(day.temp_max)}°</p>
+                        <p class="text-gray-500 text-lg">${Math.round(day.temp_min)}°</p>
                     </div>
                     <div class="border-t border-gray-200 mt-3 pt-2 text-xs text-gray-700 space-y-1 text-left">
-                        <div class="flex justify-between items-center"><span>💧 Precip:</span> <strong class="ml-1">${precipChance}%</strong></div>
-                        <div class="flex justify-between items-center"><span>💨 Wind:</span> <strong class="ml-1">${windSpeed} mph ${windDir}</strong></div>
-                        <div class="flex justify-between items-center"><span>☀️ UV Index:</span> <strong class="ml-1">${uvIndex}</strong></div>
+                        <div class="flex justify-between items-center"><span>💧 Precip:</span> <strong class="ml-1">${day.precip_prob}%</strong></div>
+                        <div class="flex justify-between items-center"><span>💨 Wind:</span> <strong class="ml-1">${Math.round(day.windspeed)} mph ${windDirection(day.wind_dir)}</strong></div>
+                        <div class="flex justify-between items-center"><span>☀️ UV:</span> <strong class="ml-1">${Math.round(day.uv_index)}</strong></div>
+                        ${aqiHtml}
                     </div>
                 `;
                 forecastGrid.appendChild(card);
             });
         }
         
-        function createTemperatureChart(dailyData) {
-            const labels = dailyData.time.map(dateStr => {
-                 const date = new Date(dateStr + 'T00:00:00-05:00');
-                 return `${date.getMonth() + 1}/${date.getDate()}`;
-            });
-
+        function createTemperatureChart(chartData) {
+            const labels = chartData.map(d => new Date(d.time).toLocaleDateString('en-US', {month: 'numeric', day: 'numeric'}));
             new Chart(tempChartCanvas, {
                 type: 'line',
                 data: {
-                    labels: labels,
+                    labels,
                     datasets: [
-                        {
-                            label: 'Max Temp (°F)', data: dailyData.temperature_2m_max, borderColor: 'rgba(239, 68, 68, 1)', backgroundColor: 'rgba(239, 68, 68, 0.1)', fill: true, tension: 0.4, borderWidth: 2, pointRadius: 3, pointBackgroundColor: 'rgba(239, 68, 68, 1)',
-                        },
-                        {
-                            label: 'Min Temp (°F)', data: dailyData.temperature_2m_min, borderColor: 'rgba(59, 130, 246, 1)', backgroundColor: 'rgba(59, 130, 246, 0.1)', fill: true, tension: 0.4, borderWidth: 2, pointRadius: 3, pointBackgroundColor: 'rgba(59, 130, 246, 1)',
-                        }
+                        { label: 'Max Temp (°F)', data: chartData.map(d => d.temp_max), borderColor: 'rgba(239, 68, 68, 1)', backgroundColor: 'rgba(239, 68, 68, 0.1)', fill: true, tension: 0.4, borderWidth: 2, pointRadius: 2 },
+                        { label: 'Min Temp (°F)', data: chartData.map(d => d.temp_min), borderColor: 'rgba(59, 130, 246, 1)', backgroundColor: 'rgba(59, 130, 246, 0.1)', fill: true, tension: 0.4, borderWidth: 2, pointRadius: 2 }
                     ]
                 },
-                options: { responsive: true, maintainAspectRatio: false, scales: { y: { ticks: { callback: value => value + '°F' }, grid: { color: 'rgba(200, 200, 200, 0.2)' } }, x: { grid: { display: false } } }, plugins: { legend: { position: 'top' }, tooltip: { mode: 'index', intersect: false } }, interaction: { mode: 'index', intersect: false } }
+                options: { responsive: true, maintainAspectRatio: false, scales: { y: { ticks: { callback: v => v + '°F' } } }, plugins: { legend: { position: 'top' }, tooltip: { mode: 'index', intersect: false } } }
             });
         }
 
-        function createUvIndexChart(dailyData) {
-            const labels = dailyData.time.map(dateStr => {
-                 const date = new Date(dateStr + 'T00:00:00-05:00');
-                 return `${date.getMonth() + 1}/${date.getDate()}`;
-            });
-
+        function createUvIndexChart(chartData) {
+            const labels = chartData.map(d => new Date(d.time).toLocaleDateString('en-US', {month: 'numeric', day: 'numeric'}));
+            const uvData = chartData.map(d => d.uv_index);
             new Chart(uvIndexChartCanvas, {
                 type: 'bar',
                 data: {
-                    labels: labels,
-                    datasets: [{
-                        label: 'Max UV Index',
-                        data: dailyData.uv_index_max,
-                        backgroundColor: dailyData.uv_index_max.map(uv => getUvColor(uv)),
-                        borderColor: dailyData.uv_index_max.map(uv => getUvColor(uv).replace('0.7', '1')),
-                        borderWidth: 1
-                    }]
+                    labels,
+                    datasets: [{ label: 'Max UV Index', data: uvData, backgroundColor: uvData.map(uv => getUvColor(uv)), borderWidth: 1 }]
                 },
-                options: { responsive: true, maintainAspectRatio: false, scales: { y: { beginAtZero: true, grid: { color: 'rgba(200, 200, 200, 0.2)' } }, x: { grid: { display: false } } }, plugins: { legend: { display: false }, tooltip: { mode: 'index', intersect: false } } }
+                options: { responsive: true, maintainAspectRatio: false, scales: { y: { beginAtZero: true } }, plugins: { legend: { display: false } } }
             });
         }
 
         // --- Initial Load ---
-        document.addEventListener('DOMContentLoaded', getWeatherData);
+        document.addEventListener('DOMContentLoaded', getAllData);
     </script>
 </body>
 </html>
